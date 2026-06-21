@@ -1,0 +1,14 @@
+# build output (ship via GitHub Releases, not git)
+dist/
+
+# dependencies (restored with `npm install`)
+node_modules/
+
+# downloaded pronunciation cache (runtime)
+audio-cache/
+
+# caveman memory backups
+*.original.md
+
+# keep: data/ (prebuilt JMdict index is needed at build time)
+# keep: glossary.json (seed vocabulary)

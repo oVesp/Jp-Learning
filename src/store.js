@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DB_PATH = join(__dirname, '..', 'glossary.json');
+// Glossary is user data → writable location. In the packaged app this is set
+// to Electron's userData dir; otherwise it falls back to the project root.
+const USER_DIR = process.env.JPL_USER_DIR || join(__dirname, '..');
+const DB_PATH = join(USER_DIR, 'glossary.json');
 
 // Word shape:
 // { romaji, kana, kanji, meaning, jlpt, addedAt, seen, correct, wrong }

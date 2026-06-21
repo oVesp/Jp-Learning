@@ -49,6 +49,39 @@ applyToggleLabel();
 // ---- glossary ----
 function esc(s) { return (s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
+// ---- audio / spoken Japanese ----
+// priority: cached human recording (Jisho) → offline Web Speech → Google TTS
+const audioEl = new Audio();
+function jaVoice() {
+  return speechSynthesis.getVoices().find((v) => /ja[-_]?JP/i.test(v.lang) || /japanese/i.test(v.name));
+}
+function webSpeak(text) {
+  if (!text || !('speechSynthesis' in window)) return false;
+  const v = jaVoice();
+  if (!v) return false;
+  const u = new SpeechSynthesisUtterance(text);
+  u.voice = v; u.lang = 'ja-JP'; u.rate = 0.95;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+  return true;
+}
+function playUrl(url) { audioEl.src = url; return audioEl.play(); }
+async function speak(w) {
+  const term = w.kanji || w.kana || w.romaji;
+  const read = w.kana || w.kanji || w.romaji;
+  // 1) human recording (best; cached after first fetch)
+  try {
+    const r = await fetch('/api/audio?q=' + encodeURIComponent(term));
+    if (r.ok) { const { url } = await r.json(); await playUrl(url); return; }
+  } catch { /* offline or none */ }
+  // 2) offline browser TTS
+  if (webSpeak(read)) return;
+  // 3) Google TTS fallback
+  try { await playUrl('/api/tts?text=' + encodeURIComponent(read)); } catch { /* give up */ }
+}
+// voices populate asynchronously in Chromium
+if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => {};
+
 function matchesFilter(w) {
   if (filter === 'all') return true;
   if (filter.startsWith('pos:')) return (w.pos || 'other') === filter.slice(4);
@@ -89,7 +122,7 @@ function renderGlossary() {
       ? `<span class="tag cat" data-cat="${esc(w.romaji)}">#${esc(w.category)}</span>`
       : `<span class="tag cat add" data-cat="${esc(w.romaji)}">+ category</span>`;
     tr.innerHTML =
-      `<td class="jp-cell">${esc(primaryReading(w))}<div class="badge">${esc(secondaryReading(w))}</div></td>` +
+      `<td class="jp-cell"><button class="spk" data-spk="${esc(w.romaji)}" title="Play pronunciation">🔊</button>${esc(primaryReading(w))}<div class="badge">${esc(secondaryReading(w))}</div></td>` +
       `<td>${ptCell}<div class="en">${esc(w.meaning)}</div></td>` +
       `<td><span class="tag pos">${esc(w.pos || 'other')}</span>${catTag}</td>` +
       `<td>${esc(w.jlpt).replace('jlpt-', '') || '—'}</td>` +
@@ -97,6 +130,10 @@ function renderGlossary() {
       `<td><button class="x" data-del="${esc(w.romaji)}">✕</button></td>`;
     tb.appendChild(tr);
   }
+  tb.querySelectorAll('[data-spk]').forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    speak(words.find((x) => x.romaji === b.dataset.spk));
+  });
   tb.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
     await api.del(b.dataset.del); await refresh();
   });
@@ -161,7 +198,7 @@ function renderPreview(term, w) {
   const dupe = words.some((x) => x.romaji === w.romaji);
   // PT is optional: empty field, user can type one or auto-translate.
   pv.innerHTML =
-    `<div class="reading">${esc(w.kana)} ・${esc(w.kanji)}<span class="romaji">${esc(w.romaji)}</span></div>` +
+    `<div class="reading"><button class="spk" id="pvSpk" title="Play pronunciation">🔊</button>${esc(w.kana)} ・${esc(w.kanji)}<span class="romaji">${esc(w.romaji)}</span></div>` +
     `<div class="pv-en">${esc(w.meaning)}</div>` +
     `<div class="pv-pos"><span class="tag pos">${esc(w.pos || 'other')}</span> <span class="badge">auto category</span></div>` +
     `<div class="pv-meta">source: ${esc(w.source)}${w.jlpt ? ' · ' + esc(w.jlpt).replace('jlpt-', '').toUpperCase() : ''}</div>` +
@@ -176,6 +213,7 @@ function renderPreview(term, w) {
       `<button id="confirmAdd" class="act">+ Add to glossary</button>` +
       (dupe ? `<span class="dupe">already in glossary — adding refreshes it</span>` : '') +
     `</div>`;
+  $('pvSpk').onclick = () => speak(w);
   $('ptBtn').onclick = () => translatePreview(w);
   $('confirmAdd').onclick = () => confirmAdd(term);
 }
@@ -276,6 +314,7 @@ function reveal() {
   $('qReveal').innerHTML = `${esc(current.meaning)}` + (current.meaningPt ? `<span class="pt">pt: ${esc(current.meaningPt)}</span>` : '');
   api.answer(current.romaji, 'wrong').then(async () => { words = await api.glossary(); });
 }
+$('qSpk').onclick = () => { if (current) speak(current); };
 $('qCheck').onclick = check;
 $('qRevealBtn').onclick = reveal;
 $('qNext').onclick = nextCard;

@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Japanese DB</title>
+<link rel="icon" href="favicon.png" />
+<title>Jp-Learning</title>
 <style>
   :root {
     --bg: #14161a; --panel: #1d2026; --line: #2c313a;
@@ -71,6 +72,9 @@
   .tag.cat { color: var(--warn); border-color: var(--warn); margin-left: 4px; }
   .tag.add { cursor: pointer; border-style: dashed; }
   .preview .pv-pos { font-size: 12px; margin-top: 4px; }
+  /* speaker buttons */
+  .spk { background: none; border: none; cursor: pointer; font-size: 15px; padding: 0 6px 0 0; opacity: .7; }
+  .spk:hover { opacity: 1; }
 </style>
 </head>
 <body>
@@ -119,6 +123,7 @@
       <div id="qBody">
         <div class="prompt" id="qPrompt">—</div>
         <div class="romaji" id="qRomaji"></div>
+        <button id="qSpk" class="act" style="background:var(--line);margin-top:10px">🔊 Listen</button>
         <div class="row" style="margin-top:20px">
           <input id="qAnswer" type="text" placeholder="type the translation (EN or PT)" />
           <button id="qCheck" class="act">Check</button>

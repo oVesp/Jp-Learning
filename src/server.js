@@ -6,11 +6,46 @@ import { lookup } from './lookup.js';
 import { load, save, upsert, find } from './store.js';
 import { toPortuguese } from './translate.js';
 import { warm, ready } from './jmdict.js';
+import { getHumanAudio, cacheDir } from './audio.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json());
 app.use(express.static(join(__dirname, '..', 'public')));
+
+// --- audio ---
+app.use('/audio', express.static(cacheDir()));
+
+// human pronunciation (JapanesePod101 via Jisho). Returns a cached mp3 url or 404.
+app.get('/api/audio', async (req, res) => {
+  const term = (req.query.q ?? '').toString().trim();
+  if (!term) return res.status(400).json({ error: 'missing q' });
+  try {
+    const file = await getHumanAudio(term);
+    if (!file) return res.status(404).json({ error: 'no audio' });
+    res.json({ url: '/audio/' + encodeURIComponent(file) });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Google TTS fallback. Proxies the mp3 (server-side to avoid CORS/referer issues).
+app.get('/api/tts', async (req, res) => {
+  const text = (req.query.text ?? '').toString().slice(0, 180);
+  if (!text) return res.status(400).end();
+  const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=ja&q=${encodeURIComponent(text)}`;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      res.set('Content-Type', 'audio/mpeg');
+      return res.send(Buffer.from(await r.arrayBuffer()));
+    } catch {
+      await new Promise((s) => setTimeout(s, 300 * (i + 1)));
+    }
+  }
+  res.status(502).end();
+});
 
 // --- glossary ---
 app.get('/api/glossary', (_req, res) => res.json(load()));
@@ -98,14 +133,26 @@ app.post('/api/answer', (req, res) => {
   res.json(w);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Japanese DB running: http://localhost:${PORT}`);
-  if (ready()) {
-    console.log('warming JMdict index…');
-    warm();
-    console.log('JMdict ready (offline lookups).');
-  } else {
-    console.log('JMdict index missing — using Jisho online only. Run: node scripts/build-index.js');
-  }
-});
+// Start the server. Resolves with the bound port once listening.
+// port 0 lets the OS pick a free port (used by the desktop app).
+export function start(port = process.env.PORT ?? 3000) {
+  return new Promise((resolve) => {
+    const server = app.listen(port, '127.0.0.1', () => {
+      const bound = server.address().port;
+      console.log(`Japanese DB running: http://localhost:${bound}`);
+      if (ready()) {
+        warm();
+        console.log('JMdict ready (offline lookups).');
+      } else {
+        console.log('JMdict index missing — using Jisho online only.');
+      }
+      resolve(bound);
+    });
+  });
+}
+
+// Run directly (node src/server.js) → start on the default port.
+import { fileURLToPath as _f } from 'node:url';
+if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
+  start();
+}

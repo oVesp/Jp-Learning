@@ -7,7 +7,10 @@ import { dirname, join } from 'node:path';
 import { toHiragana } from 'wanakana';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const INDEX_PATH = join(__dirname, '..', 'data', 'jmdict-index.json');
+// Index is a read-only resource. In the packaged app JPL_RES_DIR points at the
+// bundled resources/data folder; otherwise fall back to the project data dir.
+const RES_DIR = process.env.JPL_RES_DIR || join(__dirname, '..', 'data');
+const INDEX_PATH = join(RES_DIR, 'jmdict-index.json');
 
 let index = null;
 export function ready() {
