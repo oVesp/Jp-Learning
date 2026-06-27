@@ -42,7 +42,7 @@ $('romajiToggle').onclick = () => {
   localStorage.setItem('romajiPrimary', romajiPrimary ? '1' : '0');
   applyToggleLabel();
   renderGlossary();
-  if ($('view-quiz').style.display !== 'none' && current) showPrompt();
+  if ($('view-quiz').style.display !== 'none' && current && !answered) renderCard();
 };
 applyToggleLabel();
 
@@ -263,61 +263,115 @@ $('term').addEventListener('input', () => {
 });
 
 // ---- quiz ----
+// multiple-choice, random order, two directions.
 let queue = [], current = null, answered = false;
+let quizDir = localStorage.getItem('quizDir') || 'jp2en'; // jp2en | en2jp
 
-function norm(s) { return (s || '').trim().toLowerCase().replace(/[.;]/g, '').replace(/\s+/g, ' '); }
-function options(w) {
-  return [...(w.meaning || '').split(';'), ...(w.meaningPt || '').split(';')].map(norm).filter(Boolean);
+function shuffle(a) {
+  const r = [...a];
+  for (let i = r.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [r[i], r[j]] = [r[j], r[i]];
+  }
+  return r;
+}
+
+// what the prompt shows, and what an option shows, depend on direction
+function promptText(w) {
+  if (quizDir === 'jp2en') return { main: primaryReading(w), sub: secondaryReading(w) };
+  // en2jp: show the meaning, hide the Japanese
+  return { main: (w.meaning || '').split(';').slice(0, 2).join('; '), sub: w.meaningPt ? 'pt: ' + w.meaningPt : '' };
+}
+function optionLabel(w) {
+  if (quizDir === 'jp2en') return (w.meaning || '').split(';').slice(0, 2).join('; ') || w.romaji;
+  // meaning → JP: show kana・kanji with the romaji transcription
+  return `${w.kana} ・${w.kanji}  (${w.romaji})`;
 }
 
 function startQuiz() {
-  // least-seen first, no timer, use-count based
-  queue = [...words].sort((a, b) => (a.seen || 0) - (b.seen || 0));
+  updateDirButtons();
+  queue = shuffle(words); // random order each run
   nextCard();
 }
 
-// render the current quiz prompt honoring the romaji/kana toggle
-function showPrompt() {
-  $('qPrompt').textContent = primaryReading(current);
-  $('qRomaji').textContent = secondaryReading(current);
+function updateDirButtons() {
+  $('dirJp').classList.toggle('active', quizDir === 'jp2en');
+  $('dirEn').classList.toggle('active', quizDir === 'en2jp');
 }
 
 function nextCard() {
   answered = false;
   $('qReveal').innerHTML = '';
-  $('qAnswer').value = '';
   if (!queue.length) {
+    current = null;
     $('qPrompt').textContent = words.length ? '✓ done' : '—';
-    $('qRomaji').textContent = words.length ? 'cycle finished' : 'glossary empty — add words first';
+    $('qRomaji').textContent = words.length ? 'cycle finished — press ↻ shuffle' : 'glossary empty — add words first';
+    $('qOptions').innerHTML = '';
     $('qStats').textContent = '';
+    $('qSpk').style.display = 'none';
     return;
   }
   current = queue.shift();
-  showPrompt();
-  $('qStats').textContent = `${queue.length} left · seen ${current.seen || 0}× · ${current.correct || 0} correct`;
-  $('qAnswer').focus();
+  renderCard();
 }
 
-async function check() {
-  if (!current || answered) return;
+// render prompt + multiple-choice options for `current`
+function renderCard() {
+  if (!current) return;
+  answered = false;
+  $('qReveal').innerHTML = '';
+  const p = promptText(current);
+  $('qPrompt').textContent = p.main;
+  $('qRomaji').textContent = p.sub;
+  // speaking the answer would spoil the en2jp direction — reveal it after answering
+  $('qSpk').style.display = quizDir === 'jp2en' ? '' : 'none';
+
+  // build choices: correct word + up to 3 distinct distractors, shuffled
+  const distractors = shuffle(words.filter((w) => w.romaji !== current.romaji)).slice(0, 3);
+  const choices = shuffle([current, ...distractors]);
+  const opts = $('qOptions');
+  opts.innerHTML = '';
+  for (const w of choices) {
+    const b = document.createElement('button');
+    b.className = 'qopt';
+    b.textContent = optionLabel(w);
+    b.onclick = () => pick(w, b);
+    opts.appendChild(b);
+  }
+  $('qStats').textContent = `${queue.length} left · seen ${current.seen || 0}× · ${current.correct || 0} correct`;
+}
+
+async function pick(w, btn) {
+  if (answered) return;
   answered = true;
-  const ok = options(current).includes(norm($('qAnswer').value));
-  await api.answer(current.romaji, ok ? 'correct' : 'wrong');
+  const ok = w.romaji === current.romaji;
+  // mark buttons: chosen + the correct one
+  for (const b of $('qOptions').children) {
+    b.disabled = true;
+    if (b.textContent === optionLabel(current)) b.classList.add('correct');
+  }
+  if (!ok) btn.classList.add('wrong');
+  // reveal full answer
   $('qReveal').innerHTML =
-    `<span class="feedback ${ok ? 'ok' : 'no'}">${ok ? '✓ correct' : '✗'}</span>` +
-    ` — ${esc(current.meaning)}` +
+    `<span class="feedback ${ok ? 'ok' : 'no'}">${ok ? '✓ correct' : '✗'}</span> — ` +
+    `${esc(current.kana)} ・${esc(current.kanji)} = ${esc(current.meaning)}` +
     (current.meaningPt ? `<span class="pt">pt: ${esc(current.meaningPt)}</span>` : '');
+  $('qSpk').style.display = ''; // now safe to hear it
+  await api.answer(current.romaji, ok ? 'correct' : 'wrong');
   words = await api.glossary();
 }
-function reveal() {
-  if (answered) return; answered = true;
-  $('qReveal').innerHTML = `${esc(current.meaning)}` + (current.meaningPt ? `<span class="pt">pt: ${esc(current.meaningPt)}</span>` : '');
-  api.answer(current.romaji, 'wrong').then(async () => { words = await api.glossary(); });
+
+function setDir(dir) {
+  quizDir = dir;
+  localStorage.setItem('quizDir', dir);
+  updateDirButtons();
+  startQuiz();
 }
+
 $('qSpk').onclick = () => { if (current) speak(current); };
-$('qCheck').onclick = check;
-$('qRevealBtn').onclick = reveal;
+$('dirJp').onclick = () => setDir('jp2en');
+$('dirEn').onclick = () => setDir('en2jp');
+$('qRestart').onclick = startQuiz;
 $('qNext').onclick = nextCard;
-$('qAnswer').addEventListener('keydown', (e) => { if (e.key === 'Enter') answered ? nextCard() : check(); });
 
 refresh();
